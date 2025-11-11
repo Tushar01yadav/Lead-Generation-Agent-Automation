@@ -22,6 +22,9 @@ import sqlite3
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import shutil
+print("Chrome path:", shutil.which("google-chrome") or shutil.which("chromium-browser"))
+
 os.environ['STREAMLIT_DEBUG'] = '1'
 # Replace the hardcoded TRACKING_SERVER_URL line with:
 
