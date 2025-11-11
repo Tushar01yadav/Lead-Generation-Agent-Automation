@@ -23,7 +23,14 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import shutil
-print("Chrome path:", shutil.which("google-chrome") or shutil.which("chromium-browser"))
+
+# 👇 Check if Chrome or Chromium is installed in the environment
+chrome_path = shutil.which("google-chrome") or shutil.which("chromium-browser")
+st.write("🧠 Chrome path detected:", chrome_path or "❌ No Chrome found")
+
+# You can also log it to console for debugging
+print("Chrome path:", chrome_path or "No Chrome found")
+
 
 os.environ['STREAMLIT_DEBUG'] = '1'
 # Replace the hardcoded TRACKING_SERVER_URL line with:
