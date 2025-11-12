@@ -2639,4 +2639,4 @@ def process_leads(region, api_key_1, api_key_2, llm_name):  # ✅ Changed parame
         
 
     finally:
-        cleanup_selenium_driver()
+        cleanup_shared_driver()
