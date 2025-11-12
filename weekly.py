@@ -7,6 +7,26 @@ import time
 from main import call_llm
 import os
 import socket
+# ==================== GLOBAL SELENIUM DRIVER ====================
+_global_driver = None
+
+def get_shared_driver():
+    """Get or create a single shared Selenium driver"""
+    global _global_driver
+    if _global_driver is None:
+        _global_driver = get_shared_driver()  
+    return _global_driver
+
+def cleanup_shared_driver():
+    """Close the shared driver"""
+    global _global_driver
+    if _global_driver:
+        try:
+            _global_driver.quit()
+            print("✓ Browser closed")
+        except:
+            pass
+        _global_driver = None
 # Add this with other imports
 from inc42 import scrape_inc42_funding_table, search_duckduckgo_selenium as inc42_search, clean_text
 LLM_PROVIDER = "mistral"
@@ -216,7 +236,7 @@ def setup_selenium_driver():
 def get_selenium_driver():
     global selenium_driver  # ✅ ENSURE THIS LINE EXISTS
     if selenium_driver is None:
-        selenium_driver = setup_selenium_driver()
+        selenium_driver = get_shared_driver()  
     return selenium_driver
 
 def cleanup_selenium_driver():
