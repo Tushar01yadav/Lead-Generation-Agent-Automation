@@ -5,6 +5,18 @@ import asyncio
 import platform
 import time
 from main import call_llm
+import os
+import socket
+# Add this with other imports
+from inc42 import scrape_inc42_funding_table, search_duckduckgo_selenium as inc42_search, clean_text
+LLM_PROVIDER = "mistral"
+# ✅ Configure network settings
+os.environ['PYTHONHTTPSVERIFY'] = '0'  # Disable SSL verification if behind proxy
+socket.setdefaulttimeout(60)  # Increase global timeout to 60 seconds
+
+# If behind corporate proxy, add:
+# os.environ['HTTP_PROXY'] = 'http://proxy.company.com:8080'
+# os.environ['HTTPS_PROXY'] = 'http://proxy.company.com:8080'
 # LLM configurations (imported from main.py logic)
 LLM_CONFIGS = {
     "Mistral": {"url": "https://api.mistral.ai/v1/chat/completions", "model": "mistral-small-latest", "auth_header": "Bearer"},
@@ -79,6 +91,13 @@ USER_AGENT = (
 )
 ACCEPT_LANGUAGE = "en-US,en;q=0.9"
 MAX_RETRIES = 3
+selenium_driver = None  # Global Selenium driver instance
+
+# Global variables for API key management
+current_mistral_key = None
+mistral_key_1 = None
+mistral_key_2 = None
+current_key_index = 0
 
 # Global variables for API key management
 current_mistral_key = None
@@ -135,88 +154,72 @@ def get_chrome_version():
     except:
         return None
 
-def download_chromedriver():
-    version = get_chrome_version()
-    major = version.split('.')[0] if version else "141"
-    os.makedirs("drivers", exist_ok=True)
-    binary = "chromedriver.exe" if platform.system() == "Windows" else "chromedriver"
-    path = os.path.abspath(os.path.join("drivers", binary))
-
-    if os.path.exists(path):
-        print(f"✓ ChromeDriver already exists at: {path}")
-        return path
-
-    try:
-        print("📥 Downloading ChromeDriver...")
-        url_latest = f"https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_{major}"
-        r = requests.get(url_latest, timeout=10)
-        ver_full = r.text.strip() if r.status_code == 200 else "141.0.7390.65"
-
-        sys_map = {
-            "Windows": "win64",
-            "Darwin": "mac-arm64" if "arm" in platform.machine().lower() else "mac-x64",
-            "Linux": "linux64"
-        }
-        suffix = sys_map.get(platform.system(), "win64")
-        dl = f"https://storage.googleapis.com/chrome-for-testing-public/{ver_full}/{suffix}/chromedriver-{suffix}.zip"
-
-        z = requests.get(dl, timeout=30)
-        zip_path = os.path.join("drivers", "chromedriver.zip")
-        with open(zip_path, "wb") as f:
-            f.write(z.content)
-
-        with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            zip_ref.extractall("drivers")
-
-        os.remove(zip_path)
-
-        for root, dirs, files in os.walk("drivers"):
-            for file in files:
-                if file.startswith("chromedriver") and (file.endswith(".exe") or file == "chromedriver"):
-                    extracted_path = os.path.join(root, file)
-                    if root != "drivers":
-                        shutil.move(extracted_path, path)
-
-                    if platform.system() != "Windows":
-                        os.chmod(path, 0o755)
-
-                    print(f"✓ ChromeDriver downloaded successfully at: {path}")
-                    return path
-
-        return path
-    except Exception as e:
-        print(f"❌ Driver download error: {e}")
-        return None
 
 def setup_selenium_driver():
-    driver_path = download_chromedriver()
-    if not driver_path or not os.path.exists(driver_path):
-        raise Exception(f"ChromeDriver not found at: {driver_path}")
+    
 
+    # Random user agents to rotate
+    user_agents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    ]
+    
+    selected_ua = random.choice(user_agents)
+    
     opts = webdriver.ChromeOptions()
+    opts.add_argument(f'--user-agent={selected_ua}')
     opts.add_argument("--disable-blink-features=AutomationControlled")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--disable-gpu")
     opts.add_argument("--start-maximized")
+    
+    # Add random window size
+    window_sizes = ['1920,1080', '1366,768', '1536,864', '1440,900']
+    opts.add_argument(f'--window-size={random.choice(window_sizes)}')
+    
     opts.add_experimental_option("excludeSwitches", ["enable-automation"])
     opts.add_experimental_option('useAutomationExtension', False)
+    
+    # Add preferences
+    prefs = {
+        "credentials_enable_service": False,
+        "profile.password_manager_enabled": False,
+        "profile.default_content_setting_values.notifications": 2
+    }
+    opts.add_experimental_option("prefs", prefs)
 
-    service = Service(executable_path=driver_path)
+    if os.path.exists("/usr/bin/chromium"):  # Streamlit Cloud
+      opts.binary_location = "/usr/bin/chromium"
+      service = Service("/usr/bin/chromedriver")
+    else:  # Local
+      from webdriver_manager.chrome import ChromeDriverManager
+      service = Service(ChromeDriverManager().install())
+
     driver = webdriver.Chrome(service=service, options=opts)
+    
+    # Execute stealth scripts
     driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+    
+    print(f"✓ Browser started with stealth mode (User-Agent: {selected_ua[:50]}...)")
+    
+    # Test DuckDuckGo connection
+    driver.get("https://duckduckgo.com")
+    time.sleep(2)
+    print("✓ Browser ready for research (using DuckDuckGo)")
+    
     return driver
 
-selenium_driver = None
-
 def get_selenium_driver():
-    global selenium_driver
+    global selenium_driver  # ✅ ENSURE THIS LINE EXISTS
     if selenium_driver is None:
         selenium_driver = setup_selenium_driver()
     return selenium_driver
 
 def cleanup_selenium_driver():
-    global selenium_driver
+    global selenium_driver  # ✅ ADD THIS LINE
     if selenium_driver:
         try:
             selenium_driver.quit()
@@ -671,7 +674,7 @@ def scrape_foundersday_with_mistral(output_csv, llm_name):
 
             print(f"🔗 Loading: {url}")
             driver.get(url)
-            time.sleep(5)
+            time.sleep(1)
 
             # Verify we're on a new page by checking URL
             current_url = driver.current_url
@@ -679,13 +682,13 @@ def scrape_foundersday_with_mistral(output_csv, llm_name):
 
             # Scroll to load content
             driver.execute_script("window.scrollTo(0, 1000);")
-            time.sleep(2)
+            time.sleep(1)
             driver.execute_script("window.scrollTo(0, 0);")
-            time.sleep(2)
+            time.sleep(1)
 
             # Additional scroll to ensure all content loads
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(3)
+            time.sleep(1)
 
             # Find cards
             selectors_to_try = [
@@ -807,7 +810,7 @@ def scrape_foundersday_with_mistral(output_csv, llm_name):
             # Wait before next page
             if page < MAX_PAGES_FOUNDERSDAY:
                 print(f"\n⏳ Waiting 5 seconds before loading page {page + 1}...")
-                time.sleep(5)
+                time.sleep(2)
 
         # Create initial CSV with FoundersDay data
         if all_data:
@@ -830,51 +833,63 @@ def scrape_foundersday_with_mistral(output_csv, llm_name):
         print(f"\n❌ Error in FoundersDay scraping: {e}")
         import traceback
         traceback.print_exc()
+        cleanup_selenium_driver()
         return 0
 
-# ==================== HELPER FUNCTIONS ====================
-def search_google_selenium(query, max_retries=3):
-    """Use Selenium to search Google and return the first relevant link."""
+def search_duckduckgo_selenium(query, max_retries=3):
+    """Use Selenium to search DuckDuckGo and return the first relevant link."""
     for attempt in range(max_retries):
         try:
             driver = get_selenium_driver()
-            print(f"  🔍 Searching Google: {query}")
+            print(f"  🔍 Searching DuckDuckGo: {query}")
 
-            driver.get("https://www.google.com/")
-            time.sleep(random.uniform(2, 3))
+            # Navigate to DuckDuckGo
+            driver.get("https://duckduckgo.com/")
+            time.sleep(random.uniform(1, 2))
 
+            # Find search box and enter query
             search_box = WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.NAME, "q"))
             )
             search_box.clear()
             search_box.send_keys(query + Keys.RETURN)
-            time.sleep(random.uniform(3, 5))
+            
+            # Random human-like delay
+            delay = random.uniform(1, 2)
+            print(f"  ⏳ Waiting {delay:.1f}s (human-like behavior)...")
+            time.sleep(delay)
 
+            # Wait for results to load
             WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.ID, "search"))
+                EC.presence_of_element_located((By.CSS_SELECTOR, "article[data-testid='result']"))
             )
 
-            result_links = driver.find_elements(By.CSS_SELECTOR, "#search a")
+            # Find result links - DuckDuckGo uses different selectors
+            result_links = driver.find_elements(By.CSS_SELECTOR, "article[data-testid='result'] a[href]")
 
+            # Prioritize specific domains
             for link in result_links:
                 try:
                     href = link.get_attribute("href")
                     if not href:
                         continue
 
-                    if any(x in href for x in ["google.com", "youtube.com", "webcache", "translate.google"]):
+                    # Skip DuckDuckGo's own pages
+                    if any(x in href for x in ["duckduckgo.com", "youtube.com", "webcache"]):
                         continue
 
+                    # Prefer these domains first
                     if any(domain in href for domain in ["yourstory.com", "entrackr.com", "startuptalky.com", "crunchbase.com", "alleywatch.com", "techcrunch.com"]):
-                       print(f"  ✓ Found: {href}")
-                       return href
+                        print(f"  ✓ Found: {href}")
+                        return href
                 except:
                     continue
 
+            # Fallback: return any valid link
             for link in result_links:
                 try:
                     href = link.get_attribute("href")
-                    if href and href.startswith("http") and "google.com" not in href:
+                    if href and href.startswith("http") and "duckduckgo.com" not in href:
                         print(f"  ✓ Found (alternative): {href}")
                         return href
                 except:
@@ -886,39 +901,233 @@ def search_google_selenium(query, max_retries=3):
         except Exception as e:
             print(f"  ⚠️ Search error (attempt {attempt + 1}/{max_retries}): {str(e)[:200]}")
             if attempt < max_retries - 1:
-                sleep(random.uniform(3, 5))
+                sleep(random.uniform(4, 7))
             else:
                 return None
 
     return None
+
+def get_latest_article_link(directory_url, source_name):
+    """
+    Navigate to a directory page and extract the first (latest) article link.
+    
+    Args:
+        directory_url: URL of the directory/listing page
+        source_name: Name of the source ('YOURSTORY', 'ENTRACKR', or 'INC42')
+    
+    Returns:
+        URL of the latest article or None
+    """
+    try:
+        driver = get_selenium_driver()
+        print(f"  📂 Opening directory page: {directory_url}")
+        driver.get(directory_url)
+        time.sleep(random.uniform(2,3))
+        
+        # Scroll to ensure content loads
+        driver.execute_script("window.scrollTo(0, 500);")
+        time.sleep(1)
+        driver.execute_script("window.scrollTo(0, 0);")
+        time.sleep(1)
+        
+        if source_name == 'YOURSTORY':
+            # YourStory extraction code (existing)
+            selectors = [
+                "li.sc-c9f6afaa-0 a[href*='weekly-funding-roundup']",
+                "a[href*='weekly-funding-roundup']",
+                "div.sc-c9f6afaa-7 a[href^='/']",
+                "li a[href*='funding']"
+            ]
+            
+            for selector in selectors:
+                try:
+                    links = driver.find_elements(By.CSS_SELECTOR, selector)
+                    if links:
+                        first_link = links[0]
+                        href = first_link.get_attribute("href")
+                        
+                        if href and href.startswith('/'):
+                            href = f"https://yourstory.com{href}"
+                        
+                        if href and 'yourstory.com' in href:
+                            print(f"  ✅ Found latest YourStory article: {href}")
+                            return href
+                except Exception as e:
+                    print(f"  ⚠️ Selector {selector} failed: {e}")
+                    continue
+        
+        elif source_name == 'ENTRACKR':
+            # Entrackr extraction code (existing)
+            try:
+                html = driver.page_source
+                soup = BeautifulSoup(html, "html.parser")
+                
+                og_url_tag = soup.find('meta', {'property': 'og:url'})
+                if og_url_tag:
+                    href = og_url_tag.get('content')
+                    if href and 'entrackr.com' in href and 'funding-and-acquisitions' in href:
+                        print(f"  ✅ Found latest Entrackr article from og:url: {href}")
+                        return href
+                
+                print(f"  ⚠️ og:url method didn't find valid article link")
+            except Exception as e:
+                print(f"  ⚠️ og:url extraction failed: {e}")
+            
+            # Fallback methods for Entrackr...
+            try:
+                gallery_div = driver.find_element(By.CSS_SELECTOR, "div.gallery_content")
+                if gallery_div:
+                    first_link = gallery_div.find_element(By.CSS_SELECTOR, "a[href*='/report/weekly-funding-report/']")
+                    if first_link:
+                        href = first_link.get_attribute("href")
+                        
+                        if href and href.startswith('/'):
+                            href = f"https://entrackr.com{href}"
+                        
+                        if href and 'entrackr.com' in href:
+                            print(f"  ✅ Found latest Entrackr article (gallery): {href}")
+                            return href
+            except Exception as e:
+                print(f"  ⚠️ Gallery_content method failed: {e}")
+            
+            selectors = [
+                "div.gallery_content a[href*='funding-and-acquisitions']",
+                "a[href*='weekly-funding-report'][href*='funding-and-acquisitions']",
+                "div.feat-a-2 a[href*='/report/']",
+                "a[href*='/report/weekly-funding-report/']"
+            ]
+            
+            for selector in selectors:
+                try:
+                    links = driver.find_elements(By.CSS_SELECTOR, selector)
+                    if links:
+                        first_link = links[0]
+                        href = first_link.get_attribute("href")
+                        
+                        if href and href.startswith('/'):
+                            href = f"https://entrackr.com{href}"
+                        
+                        if href and 'entrackr.com' in href:
+                            print(f"  ✅ Found latest Entrackr article (selector): {href}")
+                            return href
+                except Exception as e:
+                    print(f"  ⚠️ Selector {selector} failed: {e}")
+                    continue
+        
+        # ✅ ADD INC42 EXTRACTION HERE
+        elif source_name == 'INC42':
+            try:
+                html = driver.page_source
+                soup = BeautifulSoup(html, "html.parser")
+                
+                # Inc42 tag pages have article cards with data-card-id
+                article_cards = soup.find_all('div', {'data-card-id': True})
+                
+                if article_cards:
+                    print(f"  📰 Found {len(article_cards)} article cards on Inc42 tag page")
+                    
+                    for card in article_cards:
+                        # Find link inside card
+                        link = card.find('a', href=True)
+                        if link:
+                            article_url = link['href']
+                            
+                            # Make sure it's a full URL
+                            if not article_url.startswith('http'):
+                                article_url = 'https://inc42.com' + article_url
+                            
+                            # Check if it's a funding galore article
+                            article_title = link.get('title', '').lower()
+                            if any(keyword in article_url.lower() or keyword in article_title for keyword in ['funding', 'galore', 'raised', 'startups']):
+                                print(f"  ✅ Found first Inc42 funding article: {article_url}")
+                                return article_url
+                    
+                    # If no funding article found, return first article anyway
+                    first_link = article_cards[0].find('a', href=True)
+                    if first_link:
+                        article_url = first_link['href']
+                        if not article_url.startswith('http'):
+                            article_url = 'https://inc42.com' + article_url
+                        print(f"  ✅ Found first Inc42 article: {article_url}")
+                        return article_url
+                
+                # Fallback: try different selectors
+                article_links = soup.find_all('a', href=True)
+                for link in article_links:
+                    href = link['href']
+                    if '/buzz/' in href or '/features/' in href:
+                        if not href.startswith('http'):
+                            href = 'https://inc42.com' + href
+                        if 'funding' in href.lower() or 'galore' in href.lower():
+                            print(f"  ✅ Found Inc42 article (fallback): {href}")
+                            return href
+                
+                print("  ⚠️ Could not find any Inc42 article on tag page")
+                return None
+                
+            except Exception as e:
+                print(f"  ❌ Error extracting Inc42 article: {e}")
+                import traceback
+                traceback.print_exc()
+                return None
+        
+        print(f"  ❌ Could not find latest article link for {source_name}")
+        return None
+        
+    except Exception as e:
+        print(f"  ❌ Error getting latest article link: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
 
 def scrape_with_fallback(url):
     """Try multiple scraping methods with fallbacks."""
     print(f"  🌐 Attempting to scrape: {url}")
 
     try:
-        print("  🔄 Trying requests...")
+        print("  🔄 Method 1: Trying requests...")
         headers = {"User-Agent": USER_AGENT}
         response = requests.get(url, headers=headers, timeout=30)
         response.raise_for_status()
         html = response.text
         if html and len(html) > 1000:
-            print("  ✅ Requests scraping successful")
+            print(f"  ✅ Requests scraping successful ({len(html)} chars)")
             return html
+        else:
+            print(f"  ⚠️ Requests returned insufficient content ({len(html)} chars)")
     except Exception as e:
         print(f"  ⚠️ Requests failed: {str(e)[:100]}")
 
     try:
-        print("  🔄 Falling back to Selenium...")
+        print("  🔄 Method 2: Falling back to Selenium...")
         driver = get_selenium_driver()
+        print(f"  🌐 Selenium: Loading {url}")
         driver.get(url)
-        time.sleep(5)
+        
+        # Verify we're on the correct page
+        current_url = driver.current_url
+        print(f"  📍 Selenium: Current URL after load: {current_url}")
+        
+        # Wait for content to load
+        print("  ⏳ Waiting for page content to load...")
+        time.sleep(1)
+        
+        # Scroll to load dynamic content
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(1)
+        driver.execute_script("window.scrollTo(0, 0);")
+        time.sleep(1)
+        
         html = driver.page_source
         if html and len(html) > 1000:
-            print("  ✅ Selenium scraping successful")
+            print(f"  ✅ Selenium scraping successful ({len(html)} chars)")
             return html
+        else:
+            print(f"  ⚠️ Selenium returned insufficient content ({len(html)} chars)")
     except Exception as e:
         print(f"  ⚠️ Selenium failed: {str(e)[:100]}")
+        import traceback
+        traceback.print_exc()
 
     print("  ❌ All scraping methods failed")
     return None
@@ -1452,6 +1661,250 @@ Return ONLY valid JSON array (no markdown, no code blocks):
     for idx, comp in enumerate(extracted_companies, 1):
      print(f"    {idx}. {comp.get('company_name', 'N/A')} - {comp.get('funding_amount', 'N/A')}")
     return companies
+
+def format_inc42_date(row_date, article_date_context=""):
+    """
+    Format Inc42 row date properly.
+    Inc42 dates are like "Oct 28" or "28 Oct" - we need to add the year.
+    
+    Args:
+        row_date: Date from table row (e.g., "Oct 28", "28 Oct", "28/10")
+        article_date_context: Article date with year for context
+    
+    Returns:
+        Formatted date string with year
+    """
+    from datetime import datetime
+    import re
+    
+    if not row_date or row_date.strip() == '':
+        return ''
+    
+    row_date = row_date.strip()
+    
+    # Get current year as default
+    current_year = datetime.now().year
+    
+    # Try to extract year from article context if available
+    context_year = current_year
+    if article_date_context:
+        year_match = re.search(r'\b(20\d{2})\b', article_date_context)
+        if year_match:
+            context_year = int(year_match.group(1))
+    
+    # Pattern 1: "Oct 28" or "OCT 28"
+    if re.match(r'^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s+\d{1,2}$', row_date, re.IGNORECASE):
+        return f"{row_date}, {context_year}"
+    
+    # Pattern 2: "28 Oct" or "28 OCT"
+    match = re.match(r'^(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)$', row_date, re.IGNORECASE)
+    if match:
+        day = match.group(1)
+        month = match.group(2)
+        return f"{month} {day}, {context_year}"
+    
+    # Pattern 3: "28/10" or "28-10"
+    match = re.match(r'^(\d{1,2})[/-](\d{1,2})$', row_date)
+    if match:
+        day = match.group(1)
+        month = match.group(2)
+        try:
+            date_obj = datetime(context_year, int(month), int(day))
+            return date_obj.strftime('%b %d, %Y')
+        except:
+            pass
+    
+    # Pattern 4: Already has year "Oct 28, 2025"
+    if re.search(r'\b20\d{2}\b', row_date):
+        return row_date
+    
+    # Fallback: return as-is with year added
+    return f"{row_date}, {context_year}"
+def parse_inc42(html, llm_name):
+    """Parse Inc42 funding galore table."""
+    from bs4 import BeautifulSoup
+    import re
+    
+    soup = BeautifulSoup(html, "html.parser")
+    companies = []
+
+    # ✅ Extract article date from page headline/title for context
+    article_date_context = ""
+    try:
+        # Try multiple selectors for title
+        title_selectors = ['h1', 'h1.entry-title', '.headline', '.article-title', 'title']
+        for selector in title_selectors:
+            title_element = soup.select_one(selector)
+            if title_element:
+                title_text = title_element.get_text().strip()
+                print(f"  📰 Found headline: {title_text[:100]}...")
+                
+                # Extract date pattern like "Oct 20, 2025" or "October 20-26, 2025"
+                date_match = re.search(r'\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{1,2})(?:-(\d{1,2}))?,?\s*(\d{4})\b', title_text, re.IGNORECASE)
+                
+                if date_match:
+                    month = date_match.group(1)
+                    start_day = date_match.group(2)
+                    end_day = date_match.group(3)
+                    year = date_match.group(4)
+                    
+                    if end_day:
+                        article_date_context = f"{month} {start_day}-{end_day}, {year}"
+                    else:
+                        article_date_context = f"{month} {start_day}, {year}"
+                    
+                    print(f"  📅 Article context date: {article_date_context}")
+                    break
+        
+        if not article_date_context:
+            print(f"  ℹ️ No article date found in headline (will use row dates)")
+    except Exception as e:
+        print(f"  ⚠️ Error extracting article date: {e}")
+
+    # Find all tables
+    tables = soup.find_all('table')
+    
+    if not tables:
+        print("  ❌ No HTML tables found on the page")
+        return companies
+    
+    print(f"  📊 Processing {len(tables)} table(s)...")
+    
+    for table_idx, table in enumerate(tables):
+        print(f"\n  📋 Analyzing Table {table_idx + 1}...")
+        
+        # Get table headers
+        headers = []
+        thead = table.find('thead')
+        if thead:
+            header_row = thead.find('tr')
+            if header_row:
+                headers = [clean_text(th.get_text(strip=True)) for th in header_row.find_all(['th', 'td'])]
+        
+        print(f"    Headers found: {headers}")
+        
+        # Find tbody rows
+        tbody = table.find('tbody')
+        if not tbody:
+            print("    ⚠️ No tbody found, skipping table")
+            continue
+        
+        rows = tbody.find_all('tr')
+        print(f"    Found {len(rows)} data rows")
+        
+        for row_idx, row in enumerate(rows):
+            try:
+                cells = row.find_all(['td', 'th'])
+                
+                if len(cells) < 2:
+                    continue
+                
+                # Extract cell data and clean text
+                cell_data = [clean_text(cell.get_text(strip=True)) for cell in cells]
+                
+                # Skip if row looks like a header
+                if any(keyword in ' '.join(cell_data).lower() for keyword in ['date', 'name', 'sector', 'subsector']) and row_idx <= 1:
+                    continue
+                
+                # Initialize
+                category = ''
+                funding_amount = ''
+                row_date = ''  # ✅ Use date from row
+                
+                # Extract based on number of columns
+                if len(cell_data) >= 4:
+                    # Structure: Date | Name | Sector | Subsector | Category | Amount | Round | Investors | Lead
+                    row_date = cell_data[0]  # ✅ FIRST COLUMN IS THE DATE
+                    company_name = cell_data[1]
+                    industry_sector = cell_data[2]
+                    
+                    # Cell[4] = Category (B2B/B2C)
+                    # Cell[5] = Funding Amount
+                    if len(cell_data) > 4:
+                        category = cell_data[4] if cell_data[4] in ['B2B', 'B2C', 'B2B2C', 'D2C', 'C2C'] else ''
+                    
+                    if len(cell_data) > 5:
+                        funding_amount = clean_text(cell_data[5])
+                    
+                    # ✅ Format the date properly (add year if missing)
+                    formatted_date = format_inc42_date(row_date, article_date_context)
+                    
+                    # Create entry
+                    funding_entry = {
+                        'Company_Name': company_name,
+                        'Funding_Amount': funding_amount,
+                        'Country': 'India',
+                        'Founder_Name': '',
+                        'Important_Person': '',
+                        'Email': '',
+                        'LinkedIn_URL': '',
+                        'Industry_Sector': industry_sector,
+                        'Category': category,
+                        'Description': '',
+                        'Date': formatted_date  # ✅ Use row date
+                    }
+                
+                elif len(cell_data) == 3:
+                    # Date | Name | Sector
+                    row_date = cell_data[0]
+                    formatted_date = format_inc42_date(row_date, article_date_context)
+                    
+                    funding_entry = {
+                        'Company_Name': cell_data[1],
+                        'Funding_Amount': '',
+                        'Country': 'India',
+                        'Founder_Name': '',
+                        'Important_Person': '',
+                        'Email': '',
+                        'LinkedIn_URL': '',
+                        'Industry_Sector': cell_data[2],
+                        'Category': '',
+                        'Description': '',
+                        'Date': formatted_date
+                    }
+                
+                elif len(cell_data) == 2:
+                    # Date | Name
+                    row_date = cell_data[0]
+                    formatted_date = format_inc42_date(row_date, article_date_context)
+                    
+                    funding_entry = {
+                        'Company_Name': cell_data[1],
+                        'Funding_Amount': '',
+                        'Country': 'India',
+                        'Founder_Name': '',
+                        'Important_Person': '',
+                        'Email': '',
+                        'LinkedIn_URL': '',
+                        'Industry_Sector': '',
+                        'Category': '',
+                        'Description': '',
+                        'Date': formatted_date
+                    }
+                
+                # Validate company name
+                company_name = funding_entry.get('Company_Name', '').strip()
+                
+                # Skip footer text
+                if any(skip_text in company_name.lower() for skip_text in [
+                    'part of a larger round',
+                    'source:',
+                    'note:',
+                    'only disclosed',
+                    'inc42'
+                ]):
+                    continue
+                
+                if funding_entry and company_name and len(company_name) > 1:
+                    companies.append(funding_entry)
+                    print(f"    ✅ [{row_idx}] {company_name} | {funding_entry['Date']} | {funding_entry['Category']} | {funding_entry['Funding_Amount']}")
+                
+            except Exception as e:
+                print(f"    ⚠️ Error parsing row {row_idx}: {str(e)[:100]}")
+                continue
+    
+    print(f"  📈 Inc42 extracted {len(companies)} companies")
+    return companies
 def parse_alleywatch(html):
     """Parse AlleyWatch."""
     soup = BeautifulSoup(html, "html.parser")
@@ -1640,7 +2093,11 @@ def parse_crunchbase(html):
     return companies
 # ==================== APPEND TO CSV FUNCTION ====================
 def append_companies_to_csv(new_companies, csv_path):
-    """Append new companies to existing CSV, avoiding duplicates and validating founders."""
+    """
+    Append new companies to existing CSV with TWO-STAGE deduplication:
+    1. First round: Remove duplicates by company name
+    2. Second round: Remove duplicates by founder name
+    """
     if not new_companies:
         return 0
 
@@ -1648,13 +2105,30 @@ def append_companies_to_csv(new_companies, csv_path):
     try:
         existing_df = pd.read_csv(csv_path, encoding='utf-8-sig')
         existing_companies = set(existing_df['Company_Name'].str.lower().str.strip())
+        # Extract existing founder names (non-empty)
+        existing_founders = set(
+            existing_df[existing_df['Founder_Name'].str.len() > 0]['Founder_Name']
+            .str.lower()
+            .str.strip()
+        )
     except:
         existing_companies = set()
+        existing_founders = set()
 
-    # Filter out duplicates and validate founders
-    unique_companies = []
+    print(f"\n🔍 DEDUPLICATION PROCESS:")
+    print(f"  • Existing companies in CSV: {len(existing_companies)}")
+    print(f"  • Existing founders in CSV: {len(existing_founders)}")
+    print(f"  • New companies to process: {len(new_companies)}")
+
+    # ========================================
+    # ROUND 1: DEDUPLICATE BY COMPANY NAME
+    # ========================================
+    round1_unique = []
+    round1_duplicates = []
+    
     for company in new_companies:
         company_name_lower = company['Company_Name'].lower().strip()
+        
         if company_name_lower not in existing_companies:
             # Validate founder names against company name
             company_name = company.get('Company_Name', '')
@@ -1671,21 +2145,69 @@ def append_companies_to_csv(new_companies, csv_path):
                 valid_persons = [p for p in persons if validate_founder_against_company(company_name, p)]
                 company['Important_Person'] = ", ".join(valid_persons)
 
-            unique_companies.append(company)
+            round1_unique.append(company)
             existing_companies.add(company_name_lower)
+        else:
+            round1_duplicates.append(company_name_lower)
+    
+    print(f"\n✅ ROUND 1 (Company Name Deduplication):")
+    print(f"  • Passed: {len(round1_unique)} companies")
+    print(f"  • Filtered out: {len(round1_duplicates)} duplicates")
+    if round1_duplicates[:3]:
+        print(f"  • Sample duplicates: {', '.join(list(round1_duplicates)[:3])}")
 
-    if unique_companies:
+    # ========================================
+    # ROUND 2: DEDUPLICATE BY FOUNDER NAME
+    # ========================================
+    round2_unique = []
+    round2_duplicates = []
+    
+    for company in round1_unique:
+        founder_name = company.get('Founder_Name', '').strip()
+        
+        # Skip founder deduplication if founder name is empty
+        if not founder_name:
+            round2_unique.append(company)
+            continue
+        
+        founder_name_lower = founder_name.lower().strip()
+        
+        # Check if this founder already exists
+        if founder_name_lower not in existing_founders:
+            round2_unique.append(company)
+            existing_founders.add(founder_name_lower)
+        else:
+            round2_duplicates.append({
+                'company': company['Company_Name'],
+                'founder': founder_name
+            })
+    
+    print(f"\n✅ ROUND 2 (Founder Name Deduplication):")
+    print(f"  • Passed: {len(round2_unique)} companies")
+    print(f"  • Filtered out: {len(round2_duplicates)} duplicates")
+    if round2_duplicates[:3]:
+        print(f"  • Sample duplicates:")
+        for dup in round2_duplicates[:3]:
+            print(f"    - {dup['company']} (founder: {dup['founder']})")
+
+    # ========================================
+    # SAVE FINAL UNIQUE COMPANIES
+    # ========================================
+    if round2_unique:
         # Append to CSV
-        new_df = pd.DataFrame(unique_companies)
+        new_df = pd.DataFrame(round2_unique)
         new_df.to_csv(csv_path, mode='a', header=False, index=False, encoding='utf-8-sig')
-        print(f"  ✅ Added {len(unique_companies)} new unique companies to CSV")
-        return len(unique_companies)
+        
+        print(f"\n🎉 DEDUPLICATION COMPLETE:")
+        print(f"  • Total new companies added: {len(round2_unique)}")
+        print(f"  • Total filtered (both rounds): {len(new_companies) - len(round2_unique)}")
+        
+        return len(round2_unique)
     else:
-        print(f"  ⚠️ No new unique companies to add (all duplicates)")
+        print(f"\n⚠️ No new unique companies to add (all filtered as duplicates)")
         return 0
 
-# ==================== PHASE 2: OTHER SOURCES SCRAPER ====================
-def scrape_other_sources(timeframe, region, output_csv,llm_name):
+def scrape_other_sources(timeframe, region, output_csv, llm_name):
     """Phase 2: Scrape other sources and append to existing CSV."""
     print("\n" + "=" * 70)
     print(f"🚀 PHASE 2: Other Sources Scraper")
@@ -1697,14 +2219,22 @@ def scrape_other_sources(timeframe, region, output_csv,llm_name):
     indian_sources = [
         {
             'name': 'YOURSTORY',
-            'query': f"weekly funding report vc {this_month} yourstory",
+            'query': 'Weekly funding roundup yourstory',
+            'use_directory': True,  # Flag to use directory extraction
             'parser': lambda html: parse_yourstory(html, llm_name)
         },
         {
-        'name': 'ENTRACKR',
-        'query': f"Funding and acquisitions in Indian startups this week : entrackr",
-        'parser': lambda html: parse_entrackr(html, llm_name)
-    }
+            'name': 'ENTRACKR',
+            'query': 'entrackr weekly funding report 2025',
+            'use_directory': True,  # Flag to use directory extraction
+            'parser': lambda html: parse_entrackr(html, llm_name)
+        },
+        {
+            'name': 'INC42',
+            'query': 'funding galore inc42',
+            'use_directory': True,  # ✅ CHANGED TO TRUE
+            'parser': lambda html: parse_inc42(html, llm_name)
+        }
     ]
 
     international_sources = [
@@ -1734,10 +2264,38 @@ def scrape_other_sources(timeframe, region, output_csv,llm_name):
         print("-" * 70)
         print(f"Searching: {source['query']}")
 
-        link = search_google_selenium(source['query'])
+        # Check if we need to use directory-based extraction
+        use_directory = source.get('use_directory', False)
+        
+        if use_directory:
+            # Step 1: Search for directory page
+            directory_link = search_duckduckgo_selenium(source['query'])
+            
+            if not directory_link:
+                print(f"  ❌ Could not find directory page for {source['name']}")
+                continue
+            
+            print(f"  📂 Found directory page: {directory_link}")
+            
+            # Step 2: Extract latest article link from directory
+            article_link = get_latest_article_link(directory_link, source['name'])
+            
+            if not article_link:
+                print(f"  ❌ Could not extract latest article from directory")
+                continue
+            
+            link = article_link
+            print(f"  📰 Latest article URL extracted: {link}")
+            
+            # ✅ CRITICAL: Add delay and verify link before scraping
+            time.sleep(1)
+            print(f"  🌐 Now opening article page for scraping...")
+        else:
+            # Original method: direct search
+            link = search_duckduckgo_selenium(source['query'])
 
         if link:
-            print(f"Found: {link}")
+            print(f"  🔗 Scraping URL: {link}") 
             try:
                 html = scrape_with_fallback(link)
                 if not html:
@@ -1769,10 +2327,142 @@ def scrape_other_sources(timeframe, region, output_csv,llm_name):
         else:
             print(f"✗ No link found for {source['name']}")
 
-        sleep(random.uniform(5, 10))
+        # Longer delays for better stealth
+        delay = random.uniform(3,4)
+        print(f"⏳ Waiting {delay:.1f}s before next source...")
+        sleep(delay)
 
     print(f"\n✅ Phase 2 Complete: Added {total_added} new companies from other sources")
+    cleanup_selenium_driver()
     return total_added
+
+def test_network_connectivity():
+    """Test if we can reach required services"""
+    import socket
+    
+    print("\n🔍 Testing Network Connectivity...")
+    
+    services = {
+        "DuckDuckGo": "duckduckgo.com",
+        "Mistral API": "api.mistral.ai",
+        "Claude API": "api.anthropic.com",
+        "Apollo API": "api.apollo.io"
+    }
+    
+    failures = []
+    for service, domain in services.items():
+        try:
+            socket.gethostbyname(domain)
+            print(f"  ✅ {service}: {domain} reachable")
+        except socket.gaierror:
+            print(f"  ❌ {service}: {domain} FAILED")
+            failures.append(service)
+    
+    if failures:
+        print(f"\n⚠️ WARNING: Cannot reach {', '.join(failures)}")
+        print("  This may cause enrichment to fail.")
+        return False
+    
+    print(f"✅ All services reachable")
+    return True   
+
+def sort_by_date(df):
+    """
+    Sort DataFrame by Date column with latest dates first.
+    Handles multiple date formats intelligently.
+    """
+    from datetime import datetime
+    import pandas as pd
+    
+    print("\n📅 SORTING DATA BY DATE (LATEST FIRST)...")
+    
+    # Create a copy to avoid modifying original
+    df_sorted = df.copy()
+    
+    # Function to parse various date formats
+    def parse_date(date_str):
+        """Parse date string into datetime object."""
+        if pd.isna(date_str) or not date_str or date_str.strip() == '':
+            return datetime.min  # Put empty dates at the end
+        
+        date_str = str(date_str).strip()
+        
+        # Remove "Reported on" prefix if exists
+        date_str = date_str.replace('Reported on ', '')
+        
+        # ✅ ADD CURRENT YEAR TO DATES WITHOUT YEAR
+        current_year = datetime.now().year
+        
+        # Check if date has no year (e.g., "Oct 25" or "OCT 25")
+        # Pattern: Month Day (no year)
+
+        # Check if date has no year (e.g., "Oct 25" or "OCT 25" or "6 Nov")
+        # Pattern: Month Day (no year) OR Day Month (no year)
+        no_year_pattern_1 = r'^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s+(\d{1,2})$'
+        no_year_pattern_2 = r'^(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)$'
+        
+        if re.match(no_year_pattern_1, date_str, re.IGNORECASE):
+            date_str = f"{date_str}, {current_year}"
+            print(f"  ℹ️ Added current year to date: {date_str}")
+        elif re.match(no_year_pattern_2, date_str, re.IGNORECASE):
+            date_str = f"{date_str} {current_year}"
+            print(f"  ℹ️ Added current year to date: {date_str}")
+        
+        # Try various formats
+        # Try various formats
+        formats = [
+            '%d %b %Y',            # 6 Nov 2025 (NEW - ADD THIS FIRST)
+            '%d %B %Y',            # 6 November 2025 (NEW)
+            '%B %d, %Y',           # October 20, 2025
+            '%b %d, %Y',           # Oct 20, 2025
+            '%B %d-%d, %Y',        # October 20-26, 2025
+            '%b %d-%d, %Y',        # Oct 20-26, 2025
+            '%m/%d/%Y',            # 10/20/2025
+            '%m/%d/%y',            # 10/20/25
+            '%Y-%m-%d',            # 2025-10-20
+            '%d-%m-%Y',            # 20-10-2025
+            '%d/%m/%Y',            # 20/10/2025
+        ]
+        
+        # For date ranges, use the start date
+        if '-' in date_str and not date_str.count('-') > 2:
+            # Handle "Oct 20-26, 2025" format
+            parts = date_str.split('-')
+            if len(parts) == 2:
+                date_str = parts[0].strip()  # Use start date
+        
+        for fmt in formats:
+            try:
+                return datetime.strptime(date_str, fmt)
+            except:
+                continue
+        
+        # If all parsing fails, return minimum date
+        print(f"  ⚠️ Could not parse date: '{date_str}'")
+        return datetime.min
+    
+    # Create sortable date column
+    df_sorted['_sort_date'] = df_sorted['Date'].apply(parse_date)
+    
+    # Sort by date (descending - latest first)
+    df_sorted = df_sorted.sort_values('_sort_date', ascending=False)
+    
+    # Remove temporary sorting column
+    df_sorted = df_sorted.drop('_sort_date', axis=1)
+    
+    # Reset index
+    df_sorted = df_sorted.reset_index(drop=True)
+    
+    # Show date distribution
+    print(f"\n  ✅ Sorted {len(df_sorted)} companies by date")
+    if 'Date' in df_sorted.columns:
+        date_counts = df_sorted['Date'].value_counts().head(10)
+        print(f"\n  📊 Top dates (latest first):")
+        for date_val, count in date_counts.items():
+            if date_val:
+                print(f"    • {date_val}: {count} companies")
+    
+    return df_sorted
 
 def process_leads(region, api_key_1, api_key_2, llm_name):  # ✅ Changed parameter names
     """
@@ -1827,6 +2517,9 @@ def process_leads(region, api_key_1, api_key_2, llm_name):  # ✅ Changed parame
         # Final summary
         try:
             final_df = pd.read_csv(output_csv)
+            final_df = sort_by_date(final_df)
+            final_df.to_csv(output_csv, index=False, encoding='utf-8-sig')
+            print(f"  💾 Saved sorted data to: {output_csv}")
             total_companies = len(final_df)
 
             print("\n" + "=" * 80)
@@ -1862,6 +2555,10 @@ def process_leads(region, api_key_1, api_key_2, llm_name):  # ✅ Changed parame
             print("\n" + "=" * 80)
             print("🔍 PHASE 3: ENRICHING DATA WITH FOUNDER/CEO INFORMATION")
             print("=" * 80)
+            if not test_network_connectivity():
+              print("\n⚠️ Network connectivity issues detected")
+              print("   Skipping enrichment - returning raw scraped data")
+              return final_df, output_csv
             try:
                 from selenium_extractor import extract_company_data
                 
@@ -1871,18 +2568,27 @@ def process_leads(region, api_key_1, api_key_2, llm_name):  # ✅ Changed parame
                 print(f"\n🤖 Starting enrichment process...")
                 print(f"  Input: {len(final_df)} companies")
                 print(f"  Output will be saved to: {enriched_output}")
-                
+                import socket
+                original_timeout = socket.getdefaulttimeout()
+                socket.setdefaulttimeout(30)  
                 # Call enrichment with the scraped DataFrame
-                enriched_df, enriched_file = extract_company_data(
-                    csv_path=final_df,
-                    llm_provider=llm_name,
-                    llm_api_keys=[api_key_1, api_key_2],
-                    output_path=enriched_output,
-                    company_column='Company_Name',
-                    apollo_api_key=None
-                )
+                try : 
+                 enriched_df, enriched_file = extract_company_data(
+    csv_path=final_df,
+    llm_provider=llm_name,
+    llm_api_keys=[api_key_1, api_key_2],
+    output_path=enriched_output,
+    company_column='Company_Name',
+    apollo_api_key=None,
+   
+)               
+                finally:
+                    socket.setdefaulttimeout(original_timeout)
                 
                 if enriched_df is not None and not enriched_df.empty:
+                    enriched_df = sort_by_date(enriched_df)
+                    enriched_df.to_excel(enriched_file, index=False, engine='openpyxl')
+                    print(f"  💾 Saved sorted enriched data to: {enriched_file}")
                     print(f"\n✅ ENRICHMENT SUCCESSFUL!")
                     print(f"  • Enriched companies: {len(enriched_df)}")
                     print(f"  • Enriched file: {enriched_file}")
