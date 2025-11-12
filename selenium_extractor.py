@@ -1175,6 +1175,7 @@ def setup_driver():
     print("\n🚀 Starting Undetected Chrome browser...")
 
     options = uc.ChromeOptions()
+    options.add_argument("--headless")
     options.add_argument('--disable-blink-features=AutomationControlled')
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--no-sandbox')
