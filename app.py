@@ -4215,17 +4215,26 @@ with tab4:
     current_time = time.time()
     time_since_refresh = current_time - st.session_state.last_auto_refresh_time
     
+    # ✅ SAFE AUTO-REFRESH WITH PROTECTION
     if time_since_refresh >= AUTO_REFRESH_INTERVAL:
-     st.session_state.last_auto_refresh_time = current_time
-     
-     # Check for replies silently in background
-     try:
-         replies_found = check_email_replies()
-         if replies_found > 0:  # ✅ ONLY RERUN IF REPLIES FOUND
-             log_to_debug(f"🔄 Auto-refresh found {replies_found} new replies")
-             st.rerun()
-     except Exception as e:
-         log_to_debug(f"⚠️ Auto-refresh error: {str(e)}")
+        # ✅ Check if we're already checking (prevents nested calls)
+        if 'checking_replies' not in st.session_state:
+            st.session_state.checking_replies = False
+        
+        if not st.session_state.checking_replies:
+            st.session_state.last_auto_refresh_time = current_time
+            st.session_state.checking_replies = True  # Lock
+            
+            try:
+                replies_found = check_email_replies()
+                if replies_found > 0:
+                    log_to_debug(f"🔄 Auto-refresh found {replies_found} new replies")
+                    st.session_state.checking_replies = False  # Unlock before rerun
+                    st.rerun()
+            except Exception as e:
+                log_to_debug(f"⚠️ Auto-refresh error: {str(e)}")
+            finally:
+                st.session_state.checking_replies = False  # Always unlock
     
     # Single Refresh button with auto-refresh text below
     col_refresh, col_spacer = st.columns([1, 5])
