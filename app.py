@@ -22,6 +22,24 @@ import sqlite3
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+# ===== ANTI-RECURSION PROTECTION ===== (ADD THIS AFTER IMPORTS)
+import sys
+sys.setrecursionlimit(2000)
+
+if 'rerun_timestamps' not in st.session_state:
+    st.session_state.rerun_timestamps = []
+
+current_time = time.time()
+st.session_state.rerun_timestamps = [
+    t for t in st.session_state.rerun_timestamps 
+    if current_time - t < 60
+]
+
+if len(st.session_state.rerun_timestamps) > 30:
+    st.error("⚠️ Too many page refreshes detected! Please refresh your browser (F5)")
+    st.stop()
+
+st.session_state.rerun_timestamps.append(current_time)
 os.environ['STREAMLIT_DEBUG'] = '1'
 # Replace the hardcoded TRACKING_SERVER_URL line with:
 
@@ -2534,8 +2552,6 @@ tab1, tab2, tab3, tab4 = st.tabs(["📊 Venture Capital & IPO", "🔗 LinkedIn S
 
 # ============ TAB 1: LEAD GENERATION ============
 
-# ============ TAB 1: LEAD GENERATION ============
-# ============ TAB 1: LEAD GENERATION ============
 with tab1:
     st.title("📊 Venture Capital & IPO")
     st.markdown("Select your preferences to generate a funding report!")
@@ -4189,7 +4205,7 @@ with tab4:
     # ===== AUTO-REFRESH SYSTEM (SILENT BACKGROUND) =====
     import time
     
-    AUTO_REFRESH_INTERVAL = 5  # seconds
+    AUTO_REFRESH_INTERVAL = 30 # seconds
     
     # Initialize auto-refresh state
     if "last_auto_refresh_time" not in st.session_state:
@@ -4200,18 +4216,16 @@ with tab4:
     time_since_refresh = current_time - st.session_state.last_auto_refresh_time
     
     if time_since_refresh >= AUTO_REFRESH_INTERVAL:
-        st.session_state.last_auto_refresh_time = current_time
-        
-        # Check for replies silently in background
-        try:
-            replies_found = check_email_replies()
-            if replies_found > 0:
-                log_to_debug(f"🔄 Auto-refresh found {replies_found} new replies")
-        except Exception as e:
-            log_to_debug(f"⚠️ Auto-refresh error: {str(e)}")
-        
-        # Trigger silent rerun
-        st.rerun()
+     st.session_state.last_auto_refresh_time = current_time
+     
+     # Check for replies silently in background
+     try:
+         replies_found = check_email_replies()
+         if replies_found > 0:  # ✅ ONLY RERUN IF REPLIES FOUND
+             log_to_debug(f"🔄 Auto-refresh found {replies_found} new replies")
+             st.rerun()
+     except Exception as e:
+         log_to_debug(f"⚠️ Auto-refresh error: {str(e)}")
     
     # Single Refresh button with auto-refresh text below
     col_refresh, col_spacer = st.columns([1, 5])
