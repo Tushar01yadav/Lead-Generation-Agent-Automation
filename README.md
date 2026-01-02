@@ -2,7 +2,8 @@
 
 📊 **AI-Powered Lead Generation, Outreach & CRM Analytics Platform**
 
-> **SERA** is an enterprise-grade AI agent that automates **startup discovery, lead enrichment, outbound email outreach, and CRM performance tracking** using multi-LLM orchestration, browser automation, and custom-built analytics infrastructure.
+> **SERA** is an enterprise-grade AI agent that automates **startup discovery, lead enrichment,Personalized LinkedIn lead extraction driven by natural language intent,
+ outbound email outreach, and CRM performance tracking** using multi-LLM orchestration, browser automation, and custom-built analytics infrastructure.
 
 ---
 
@@ -91,6 +92,21 @@ This creates a **closed-loop AI system** that transforms raw web data into **mea
 
 ---
 
+### 🔗 LinkedIn Lead Generation (Personalized)
+
+- Automated **LinkedIn-based lead discovery**
+- Accepts **custom search intent** (e.g., role, industry, tech stack, geography)
+- Personalized extraction based on user-defined fields:
+  - Job title
+  - Company size
+  - Industry
+  - Location
+  - Keywords
+- AI-assisted profile validation to filter low-quality leads
+- Supports CSV upload + direct LinkedIn scraping
+
+---
+
 ### 📧 Outreach Automation
 - Automated outbound email campaigns using **predefined templates**
 - Personalized emails per company
@@ -136,9 +152,17 @@ SERA/
 
 1. **User Input** → Sector, region, timeframe (Streamlit UI)
 2. **Intent Analysis** → LLM determines report frequency
-3. **Data Collection** → Selenium scraping
-4. **LLM Extraction** → Structured data parsing
-5. **Lead Enrichment** → LinkedIn + Apollo.io
+3. **Data Collection**
+   - Funding platforms (FoundersDay, GrowthList)
+   - LinkedIn personalized lead scraping based on user intent
+
+4. **LLM Structuring**
+   - Converts raw web & LinkedIn data into structured lead objects
+
+5. **Enrichment**
+   - LinkedIn profile validation
+   - Apollo.io contact enrichment
+
 6. **Outreach Automation** → Email campaigns
 7. **CRM Tracking** → Open, reply & bounce analytics
 8. **Export** → CSV / Excel / Google Sheets
